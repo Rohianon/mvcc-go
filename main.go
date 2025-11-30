@@ -169,6 +169,19 @@ func (d *Database) transactionState(txId uint64) Transaction {
 	return t
 }
 
+func (d *Database) isvisible(t *Transaction, value Value) bool {
+	// Read Uncommited means we simply read the last value written.
+	// Even if the transaction that wrote this value has not committed,
+	// and even if it has aborted.
+	if t.isolation == ReadUncommitedIsolation {
+		// We must merely make sure the value has not been deleted.
+		return value.txEndId == 0
+	}
+
+	assert(false, "unsupported isolation level")
+	return false
+}
+
 func (d *Database) assertValidTransaction(t *Transaction) {
 	assert(t.id > 0, "valid id")
 	assert(d.transactionState(t.id).state == InProgressTransaction, "in progress")
