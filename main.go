@@ -220,6 +220,86 @@ func (c *Connection) execCommand(command string, args []string) (string, error) 
 		return "", err
 	}
 
+	/*
+		As mentioned earlier, the key-value store is actually map[string][]Value.
+		With the more recent versions of a value at the end of the list of values
+		for the key.
+	*/
+	/*
+		For get support, we'll iterate the list of value versions backwards for the key.
+		And we'll call a special new isvisible method to determine if this transaction
+		can see this value. The first value that passes the isvisible test is
+		the correct value for the transaction.
+	*/
+	if command == "get" {
+		c.db.assertValidTransaction(c.tx)
+
+		key := args[0]
+		c.tx.readset.Insert(key)
+
+		for i := len(c.db.store[key]) - 1; i >= 0; i-- {
+			value := c.db.store[key][i]
+			debug(value, c.tx, c.db.isvisible(c.tx, value))
+
+			if c.db.isvisible(c.tx, value) {
+				return value.value, nil
+			}
+		}
+
+		return "", fmt.Errorf("cannot get key that does not exist")
+	}
+
+	/*
+		I snuck in tracking which keys are read, and we'll also soon sneak in
+		tracking which keys are written. This is necessary in stricter isolation
+		levels. More on this later.
+		set and delet are similar to get. But this time, wehne we walk the list of value
+		versions, we will set the texEndId for the value to the current transaction
+		id if the value version is visible to this transaction.
+		Then for set, we'll append to the value version list with the new version
+		of the value that starts at this current transaction.
+	*/
+	if command == "set" || command == "delete" {
+		c.db.assertValidTransaction(c.tx)
+
+		key := args[0]
+
+		// Mark all visible versions as now invalid.
+		found := false
+		for i := len(c.db.store[key]) - 1; i >= 0; i-- {
+			value := &c.db.store[key][i]
+			debug(value, c.tx, c.db.isvisible(c.tx, *value))
+
+			if c.db.isvisible(c.tx, *value) {
+				value.txEndId = c.tx.id
+				found = true
+			}
+		}
+		if command == "delete" && !found {
+			return "", fmt.Errorf("cannot delete key that does not exist")
+		}
+
+		c.tx.writeset.Insert(key)
+		// And add a new version if it's a set command.
+		if command == "set" {
+			value := args[1]
+			c.db.store[key] = append(c.db.store[key], Value{
+				txStartId: c.tx.id,
+				txEndId:   0,
+				value:     value,
+			})
+
+			return value, nil
+		}
+
+		// Delete ok.
+		return "", nil
+	}
+	/*
+		this time rather than modifying the readset we modify the writeset
+		for the transaction. And that is how commands get executed!
+	*/
+
 	//TODO:
 	return "", fmt.Errorf("unimplemented")
 }
