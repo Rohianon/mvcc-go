@@ -13,7 +13,9 @@
 
 # Code coverage profiles and other test artifacts
 *.out
+*.mvcc
 mvcc/*
+mvcc
 coverage.*
 *.coverprofile
 profile.cov
